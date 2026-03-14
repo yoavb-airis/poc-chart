@@ -1,0 +1,39 @@
+{{- if .Values.serviceMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ .Release.Name }}-servicemonitor
+  namespace: {{ .Release.Namespace }}
+  labels:
+    release: {{ .Release.Name }}
+    app.kubernetes.io/name: {{ .Chart.Name }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  selector:
+    matchLabels:                       
+      {{- include "ai-module.labels" . | nindent 6 }}
+  namespaceSelector:
+    {{- with .Values.serviceMonitor.namespaceSelector }}
+      {{- if .any }}
+    any: true
+      {{- else if .matchNames }}
+    matchNames:
+      {{- range .matchNames }}
+      - {{ . }}
+      {{- end }}
+      {{- else }}
+    matchNames:
+      - {{ $.Release.Namespace }}
+      {{- end }}
+    {{- else }}
+    matchNames:
+      - {{ .Release.Namespace }}
+    {{- end }}
+  endpoints:
+    {{- range .Values.serviceMonitor.endpoints }}
+    - port: {{ default "http" .port }}
+      path: {{ default "/metrics" .path  }}
+      interval: {{ default "30s" .interval }}
+      honorLabels: true # to not overwrite Prometheus labels with target labels
+    {{- end }}
+{{- end }}

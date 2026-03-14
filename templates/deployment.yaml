@@ -1,0 +1,278 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ai-module.fullname" . }}
+  labels:
+    {{- include "ai-module.labels" . | nindent 4 }}
+    {{- if .Values.kai.enabled }}
+    runai/queue: {{ .Values.kai.queue | quote }}
+    {{- end }}
+spec:
+  {{- if and (not .Values.autoscaling.enabled) (not .Values.keda.enabled) }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "ai-module.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "ai-module.labels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- if .Values.kai.enabled }}
+        runai/queue: {{ .Values.kai.queue | quote }}
+        {{- end }}
+      {{- if or .Values.podAnnotations .Values.kai.enabled }}
+      annotations:
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- if .Values.kai.enabled }}
+        {{- if .Values.kai.gpuFraction }}
+        gpu-fraction: {{ .Values.kai.gpuFraction | quote }}
+        {{- else if .Values.kai.gpuMemory }}
+        gpu-memory: {{ .Values.kai.gpuMemory | quote }}
+        {{- end }}
+        {{- end }}
+      {{- end }}
+    spec:
+      imagePullSecrets:
+      {{- with .Values.imagePullSecrets }}
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{  if .Values.imageCredentials.enabled }}
+        - name: {{ .Release.Name }}-image-pull-secret
+      {{ end }}
+      serviceAccountName: {{ include "ai-module.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- if .Values.gpu.enabled }}
+      {{- with .Values.gpu.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.gpu.schedulerName }}
+      schedulerName: {{ . | quote }}
+      {{- end }}
+      {{- with .Values.gpu.runtimeClassName }}
+      runtimeClassName: {{ . | quote }}
+      {{- end }}
+      {{- with .Values.gpu.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.gpu.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- else }}
+      {{- with .Values.cpu.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.cpu.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.cpu.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- end }}
+      {{- with .Values.initContainers }}
+      initContainers:
+        {{- range . }}
+        - name: {{ .name }}
+          image: {{ .image }}
+          {{- with .command }}
+          command:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .args }}
+          args:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .env }}
+          env:
+            {{- range $key, $value := . }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+          {{- end }}
+          {{- with .volumeMounts }}
+          volumeMounts:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+        {{- end }}
+      {{- end }}
+      containers:
+        - name: {{ include "ai-module.fullname" . }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- with .Values.args }}
+          args:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+              protocol: TCP
+          env:
+          {{- if .Values.sharedVolume.enabled }}
+            - name: SHARED_VOLUME
+              value: {{ .Values.sharedVolume.mountPath | quote }}
+          {{- end }}
+          {{- if .Values.gpu.enabled }}
+            - name: LD_LIBRARY_PATH
+              value: {{ .Values.gpu.ldLibraryPath | quote }}
+          {{- end }}
+          {{- with .Values.env }}
+          {{- range $key, $value := . }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+          {{- end }}
+          {{- end }}
+          {{- with .Values.kai.env }}
+          {{- range $key, $value := . }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+          {{- end }}
+          {{- end }}
+          {{- range .Values.envFromSecrets }}
+          {{- $secretName := .secretName }}
+          {{- range .keys }}
+            - name: {{ . }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secretName }}
+                  key: {{ . }}
+          {{- end }}
+          {{- end }}
+          {{- with .Values.secrets }}
+          {{- range $key, $value := . }}
+            - name: {{ $key }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $.Release.Name }}-secret
+                  key: {{ $key }}
+          {{- end }}
+          {{- end }}
+          {{- with .Values.sealedsecret }}
+          {{- range $key, $value := . }}
+            - name: {{ $key }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $.Release.Name }}-sealedsecret
+                  key: {{ $key }}
+          {{- end }}
+          {{- end }}
+          {{- if .Values.externalSecret.enabled }}
+          envFrom:
+            - secretRef:
+                name: {{ .Release.Name }}-externalsecret-data
+          {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+          {{- if .Values.sharedVolume.enabled }}
+            - name: shared-volume
+              mountPath: {{ .Values.sharedVolume.mountPath }}
+          {{- end }}
+          {{- if .Values.assetsPvc.enabled }}
+            - name: assets
+              mountPath: {{ .Values.assetsPvc.mountPath }}
+              {{- if .Values.assetsPvc.subPath }}
+              subPath: {{ .Values.assetsPvc.subPath }}
+              {{- end }}
+              readOnly: {{ .Values.assetsPvc.readOnly }}
+          {{- end }}
+          {{- with .Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- if .Values.startupProbe.enabled }}
+          startupProbe:
+            {{- toYaml (omit .Values.startupProbe "enabled") | nindent 12 }}
+          {{- end }}
+          {{- if .Values.livenessProbe.enabled }}
+          livenessProbe:
+            {{- toYaml (omit .Values.livenessProbe "enabled") | nindent 12 }}
+          {{- end }}
+          {{- if .Values.readinessProbe.enabled }}
+          readinessProbe:
+            {{- toYaml (omit .Values.readinessProbe "enabled") | nindent 12 }}
+          {{- end }}
+        {{- if .Values.postman.enabled }}
+        - name: postman
+          image: "{{ .Values.postman.image.repository }}:{{ .Values.postman.image.tag }}"
+          imagePullPolicy: Always
+          env:
+          {{- with .Values.postman.env }}
+          {{- range $key, $value := . }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+          {{- end }}
+          {{- end }}
+          {{- range .Values.postman.envFromSecrets }}
+          {{- $secretName := .secretName }}
+          {{- range .keys }}
+            - name: {{ . }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secretName }}
+                  key: {{ . }}
+          {{- end }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.postman.resources | nindent 12 }}
+          volumeMounts:
+          {{- if .Values.sharedVolume.enabled }}
+            - name: shared-volume
+              mountPath: {{ .Values.sharedVolume.mountPath }}
+          {{- end }}
+          {{- with .Values.postman.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          lifecycle:
+            postStart:
+              exec:
+                command:
+                  - /bin/bash
+                  - -c
+                  - |
+                    if wget -T {{ .Values.postman.healthCheck.timeout }} --tries {{ .Values.postman.healthCheck.retries }} http://localhost:{{ .Values.postman.healthCheck.port }}{{ .Values.postman.healthCheck.path }}; then
+                      echo "Health check successful"
+                      exit 0
+                    else
+                      echo "Health check failed"
+                      exit 1
+                    fi
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: {{ .Values.service.port }}
+            initialDelaySeconds: {{ .Values.postman.livenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.postman.livenessProbe.periodSeconds }}
+        {{- end }}
+      volumes:
+      {{- if .Values.sharedVolume.enabled }}
+        - name: shared-volume
+          emptyDir: {}
+      {{- end }}
+      {{- if .Values.assetsPvc.enabled }}
+        - name: assets
+          persistentVolumeClaim:
+            claimName: {{ .Values.assetsPvc.claimName }}
+            readOnly: {{ .Values.assetsPvc.readOnly }}
+      {{- end }}
+      {{- if .Values.pvc.enabled }}
+        - name: {{ .Values.pvc.name | default (printf "%s-pvc" (include "ai-module.fullname" .)) }}
+          persistentVolumeClaim:
+            claimName: {{ .Values.pvc.name | default (printf "%s-pvc" (include "ai-module.fullname" .)) }}
+      {{- end }}
+      {{- with .Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

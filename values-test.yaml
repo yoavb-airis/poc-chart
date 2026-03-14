@@ -1,0 +1,125 @@
+# Test values for object-detection AI module
+# Based on corresponding values from airis-deployments (ramazzotti pilot)
+
+replicaCount: 1
+
+image:
+  repository: us-central1-docker.pkg.dev/airis-artifacts/packages/face_detection_clustering
+  tag: "2026-03-09-T-04-02-07_alpha_9a381a9"
+
+env:
+  TQDM_DISABLE: "True"
+  BENTOML_DO_NOT_TRACK: "True"
+  TIMEOUT: "1500"
+
+resources:
+  limits:
+    cpu: 1
+    memory: 7Gi
+    nvidia.com/gpu: 1
+  requests:
+    cpu: 1
+    memory: 7Gi
+    nvidia.com/gpu: 1
+
+# ---------------------------------------------------------------------------
+# GPU scheduling
+# ---------------------------------------------------------------------------
+gpu:
+  enabled: true
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# ---------------------------------------------------------------------------
+# KAI disabled for this test
+# ---------------------------------------------------------------------------
+kai:
+  enabled: false
+
+# ---------------------------------------------------------------------------
+# Postman sidecar
+# ---------------------------------------------------------------------------
+postman:
+  enabled: true
+  image:
+    repository: us-central1-docker.pkg.dev/airis-artifacts/packages/postman
+    tag: "2026-03-09-T-04-02-07_alpha_9a381a9"
+  resources:
+    limits:
+      cpu: 1
+      memory: 2Gi
+    requests:
+      cpu: 1
+      memory: 2Gi
+  env:
+    JOB_TYPE: "face_detection_clustering"
+    SHARED_VOLUME: "/data"
+    POST_OFFICE_URL: "http://post-office.default.svc.cluster.local:2704"
+    INFERENCE_URL: "http://localhost:3000/infer"
+    IS_API: "True"
+    SLEEP_TIME: "1"
+    MONITOR_FLAG: "True"
+    SHOULD_UPLOAD_DIR: "false"
+    TIMEOUT: "550"
+
+# ---------------------------------------------------------------------------
+# Probes
+# ---------------------------------------------------------------------------
+livenessProbe:
+  enabled: true
+  httpGet:
+    path: /healthz
+    port: 3000
+  initialDelaySeconds: 120
+  periodSeconds: 120
+
+# ---------------------------------------------------------------------------
+# Shared volume
+# ---------------------------------------------------------------------------
+sharedVolume:
+  enabled: true
+  mountPath: /data
+
+# ---------------------------------------------------------------------------
+# Assets PVC — existing claim
+# ---------------------------------------------------------------------------
+assetsPvc:
+  enabled: true
+  claimName: "assets-pvc"
+  mountPath: /home/ubuntu/airis/ai/face_detection_clustering
+  subPath: airis-environment-assets/face-detection-clustering/v1.0.0/
+  readOnly: true
+
+# ---------------------------------------------------------------------------
+# Service
+# ---------------------------------------------------------------------------
+service:
+  type: ClusterIP
+  port: 3000
+  portName: metrics
+
+# ---------------------------------------------------------------------------
+# ServiceMonitor
+# ---------------------------------------------------------------------------
+serviceMonitor:
+  enabled: true
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 5s
+
+# ---------------------------------------------------------------------------
+# Service account
+# ---------------------------------------------------------------------------
+serviceAccount:
+  create: false
+  name: "airis"
+
+# ---------------------------------------------------------------------------
+# Pod labels — matching airis-deployments labels
+# ---------------------------------------------------------------------------
+podLabels:
+  airis-labs.com/ai-module: "true"
+  airis-labs.com/full-mode: "true"
+  airis-labs.com/app-only-mode: "true"

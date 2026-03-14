@@ -1,0 +1,24 @@
+{{- if .Values.keda.enabled }}
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: {{ include "ai-module.fullname" . }}-scaledobject
+  namespace: {{ .Release.Namespace }}
+spec:
+  scaleTargetRef:
+    name: {{ include "ai-module.fullname" . }}
+  minReplicaCount: {{ default 1 .Values.keda.minReplicaCount }}
+  maxReplicaCount: {{ default 10 .Values.keda.maxReplicaCount }}
+  cooldownPeriod: {{ default 30 .Values.keda.cooldownPeriod }}
+  pollingInterval: {{ default 15 .Values.keda.pollingInterval }}
+  triggers:
+{{- range .Values.keda.triggers }}
+    - type: {{ .type }}
+      metadata:
+        {{ toYaml .metadata | nindent 8 }}
+      {{- with .authenticationRef }}
+      authenticationRef:
+        {{ toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}
+{{- end }}

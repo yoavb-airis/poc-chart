@@ -1,0 +1,355 @@
+# Default values for ai-module chart.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+replicaCount: 1
+
+image:
+  repository: ""
+  pullPolicy: Always
+  # Overrides the image tag whose default is the chart appVersion.
+  tag: ""
+
+# Main container environment variables — pass as key-value pairs
+env: {}
+  # TQDM_DISABLE: "True"
+  # BENTOML_DO_NOT_TRACK: "True"
+  # TIMEOUT: "1500"
+
+# Env vars from existing K8s secrets
+envFromSecrets: []
+  # - secretName: aws-creds
+  #   keys:
+  #     - AWS_ACCESS_KEY_ID
+  #     - AWS_SECRET_ACCESS_KEY
+
+# Secrets — creates a K8s Secret and injects as env vars
+secrets: {}
+
+# SealedSecrets — creates a SealedSecret and injects as env vars
+sealedsecret: {}
+
+# Main container resources
+resources: {}
+  # We usually recommend not to specify default resources and to leave this as a conscious
+  # choice for the user. This also increases chances charts run on environments with little
+  # resources, such as Minikube. If you do want to specify resources, uncomment the following
+  # lines, adjust them as necessary, and remove the curly braces after 'resources:'.
+  # limits:
+  #   cpu: 1
+  #   memory: 4Gi
+  #   nvidia.com/gpu: 1
+  # requests:
+  #   cpu: 1
+  #   memory: 4Gi
+  #   nvidia.com/gpu: 1
+
+# Container args — used by vLLM-style modules that need custom entrypoint args
+args: []
+  # - "--model"
+  # - "/app/model_data"
+  # - "--port"
+  # - "8007"
+
+nameOverride: ""
+fullnameOverride: ""
+
+# ---------------------------------------------------------------------------
+# GPU scheduling — used when gpu.enabled=true
+# ---------------------------------------------------------------------------
+gpu:
+  enabled: false
+  nodeSelector: {}
+    # node_pool: gpu-double-l4-pool
+  tolerations: []
+  affinity: {}
+  schedulerName: ""
+  runtimeClassName: ""
+  # LD_LIBRARY_PATH injected as env var for GPU modules
+  ldLibraryPath: "/usr/local/nvidia/lib64"
+
+# ---------------------------------------------------------------------------
+# CPU scheduling — used when gpu.enabled=false
+# ---------------------------------------------------------------------------
+cpu:
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# ---------------------------------------------------------------------------
+# KAI (Run:ai) GPU sharing support
+# When enabled, adds runai/queue label and gpu-fraction/gpu-memory annotations.
+# Also injects kai.env as env vars (e.g., CUDA_VISIBLE_DEVICES=0 is required
+# by KAI so the process uses only the virtualized GPU device KAI exposes).
+# ---------------------------------------------------------------------------
+kai:
+  enabled: false
+  queue: ""
+  gpuFraction: ""       # e.g., "0.5" — fractional GPU time-slicing
+  gpuMemory: ""         # e.g., "10000" — GPU memory in MB
+  env: {}
+    # CUDA_VISIBLE_DEVICES: "0"
+
+# ---------------------------------------------------------------------------
+# Postman sidecar — most AI modules use this for job orchestration
+# Set enabled: false for modules that don't need it (e.g., LLM serving modules)
+# ---------------------------------------------------------------------------
+postman:
+  enabled: true
+  image:
+    repository: ""
+    tag: ""
+  resources:
+    limits:
+      cpu: 1
+      memory: 2Gi
+    requests:
+      cpu: 1
+      memory: 2Gi
+  # Postman environment variables — pass as key-value pairs
+  env: {}
+    # JOB_TYPE: "object_detection"c
+    # POST_OFFICE_URL: "http://post-office.default.svc.cluster.local:2704"
+    # INFERENCE_URL: "http://localhost:3000/infer"
+    # IS_API: "True"
+    # SLEEP_TIME: "1"
+    # MONITOR_FLAG: "True"
+    # TIMEOUT: "300"
+    # SHOULD_UPLOAD_DIR: "false"
+  envFromSecrets: []
+  extraVolumeMounts: []
+  # Health check for postman lifecycle postStart hook
+  healthCheck:
+    port: 3000
+    path: /healthz
+    timeout: 10
+    retries: 10
+  # Postman liveness probe
+  livenessProbe:
+    initialDelaySeconds: 120
+    periodSeconds: 120
+
+# ---------------------------------------------------------------------------
+# Probes (main container) — same pattern as original poc-chart
+# ---------------------------------------------------------------------------
+startupProbe:
+  enabled: false
+  httpGet:
+    path: /
+    port: http
+livenessProbe:
+  enabled: true
+  httpGet:
+    path: /healthz
+    port: 3000
+  initialDelaySeconds: 120
+  periodSeconds: 120
+readinessProbe:
+  enabled: false
+  httpGet:
+    path: /
+    port: http
+
+# ---------------------------------------------------------------------------
+# Shared emptyDir volume — mounted at /data, shared between main + postman
+# ---------------------------------------------------------------------------
+sharedVolume:
+  enabled: true
+  mountPath: /data
+
+# ---------------------------------------------------------------------------
+# Assets PVC — references an EXISTING PVC claim (read-only)
+# Used by most AI modules to mount pre-built model assets
+# ---------------------------------------------------------------------------
+assetsPvc:
+  enabled: false
+  claimName: "assets-pvc"
+  mountPath: ""         # e.g., /home/ubuntu/airis/ai/object_detection
+  subPath: ""           # e.g., airis-environment-assets/object-detection/v1.0.0/
+  readOnly: true
+
+# ---------------------------------------------------------------------------
+# PVC creation — creates a NEW PVC (for LLM model storage, etc.)
+# ---------------------------------------------------------------------------
+pvc:
+  enabled: false
+  size: "30Gi"
+  accessMode: ReadWriteOnce
+  storageClass: ""
+
+# ---------------------------------------------------------------------------
+# ConfigMap creation — creates a ConfigMap from arbitrary data
+# ---------------------------------------------------------------------------
+configMap:
+  enabled: false
+  data: {}
+    # config.yaml: |
+    #   transcribe:
+    #     model: ivrit-ai/whisper-v2-d3-e3
+    #   diarization:
+    #     model: pyannote/speaker-diarization-3.1
+
+# ---------------------------------------------------------------------------
+# Init containers — structured list with clear parameters
+# ---------------------------------------------------------------------------
+initContainers: []
+# Each item accepts the following parameters:
+#   name:         (required) container name
+#   image:        (required) container image with tag
+#   command:      (required) entrypoint command as a list of strings
+#   args:         (optional) arguments to the command as a list of strings
+#   env:          (optional) key-value env vars, same format as main env
+#   volumeMounts: (optional) list of volume mounts for this init container
+#
+# Example — download model from GCS:
+#   - name: download-model
+#     image: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+#     command: ["sh", "-c"]
+#     args:
+#       - |
+#         if [ -f "/app/model_data/config.json" ]; then exit 0; fi
+#         gcloud storage cp -r gs://bucket/model/* /app/model_data/
+#     env:
+#       CLOUDSDK_CORE_PROJECT: my-project
+#     volumeMounts:
+#       - name: model-storage
+#         mountPath: /app/model_data
+#
+# Example — wait for LLM dependency:
+#   - name: wait-for-llm
+#     image: curlimages/curl:latest
+#     command: ["sh", "-c"]
+#     args:
+#       - |
+#         until curl -sf http://dicta-onprem-llm:8007/health; do sleep 5; done
+
+# Additional volumes on the output Deployment definition.
+extraVolumes: []
+# - name: foo
+#   secret:
+#     secretName: mysecret
+#     optional: false
+# - name: dshm
+#   emptyDir:
+#     medium: Memory
+#     sizeLimit: 16Gi
+
+# Additional volumeMounts on the output Deployment definition.
+extraVolumeMounts: []
+# - name: foo
+#   mountPath: "/etc/foo"
+#   readOnly: true
+
+# ---------------------------------------------------------------------------
+# Service
+# ---------------------------------------------------------------------------
+service:
+  type: ClusterIP
+  port: 3000
+  portName: metrics
+
+# ---------------------------------------------------------------------------
+# Below: kept exactly as original poc-chart
+# ---------------------------------------------------------------------------
+
+imageCredentials:
+  enabled: false
+  username: ""
+  password: ""
+  email: ""
+  registry: ""
+
+# Existing image pull secrets names.
+imagePullSecrets: []
+
+serviceAccount:
+  # Specifies whether a service account should be created
+  create: false
+  # Automatically mount a ServiceAccount's API credentials?
+  automount: true
+  # Annotations to add to the service account
+  annotations: {}
+  # The name of the service account to use.
+  # If not set and create is true, a name is generated using the fullname template
+  name: ""
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext: {}
+  # fsGroup: 2000
+
+securityContext: {}
+  # capabilities:
+  #   drop:
+  #   - ALL
+  # readOnlyRootFilesystem: true
+  # runAsNonRoot: true
+  # runAsUser: 1000
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 1
+  # targetMemoryUtilizationPercentage: 80
+
+keda:
+  enabled: false
+  triggers: []
+  # minReplicaCount: 1
+  # maxReplicaCount: 10
+  # pollingInterval: 15
+  # cooldownPeriod: 60
+
+  # triggers:
+  #   - type: prometheus
+  #     metadata:
+  #       serverAddress: http://prometheus-server.monitoring.svc.cluster.local
+  #       metricName: http_requests_total
+  #       query: sum(rate(http_requests_total[1m]))
+  #       threshold: "10"
+  #     authenticationRef:
+  #       name: prometheus-trigger-auth
+
+  #   - type: rabbitmq
+  #     metadata:
+  #       queueName: my-queue
+  #       host: RabbitMQConnection
+  #       queueLength: "5"
+  #     authenticationRef:
+  #       name: rabbitmq-trigger-auth
+
+externalSecret:
+  enabled: false
+  refreshInterval: "1h"
+  secretStore:
+    kind: "SecretStore"
+    name: ""
+  data: []
+  # - key: "path/to/secret"
+  #   properties:
+  #     - "property1"
+  #     - "property2"
+  # - key: "path/to/another/secret" # use all properties under this key
+
+serviceMonitor:
+  enabled: false
+# Optional namespaceSelector; if not set, template defaults to release namespace
+# select all namespaces
+  # namespaceSelector:
+  #   any: true
+# select specific namespaces
+  # namespaceSelector:
+  #   matchNames:
+  #     - monitoring
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 5s
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
